@@ -1,0 +1,54 @@
+{
+  "metadata": {
+    "platform": "RoboMaster TT",
+    "stick_range": [-100, 100],
+    "source": "conservative_bootstrap_model",
+    "note": "Rough default model for software bring-up only. Replace with autonomous identification output before flight tuning."
+  },
+  "axes": {
+    "pitch": {
+      "K": 1.2,
+      "tau": 0.45,
+      "Td": 0.12,
+      "vmax": 0.45,
+      "amax": 1.0,
+      "response": "fopdt",
+      "unit": "m/s per normalized stick",
+      "fit": {"bootstrap": true},
+      "validation": {}
+    },
+    "roll": {
+      "K": 1.2,
+      "tau": 0.45,
+      "Td": 0.12,
+      "vmax": 0.45,
+      "amax": 1.0,
+      "response": "fopdt",
+      "unit": "m/s per normalized stick",
+      "fit": {"bootstrap": true},
+      "validation": {}
+    },
+    "throttle": {
+      "K": 0.8,
+      "tau": 0.50,
+      "Td": 0.12,
+      "vmax": 0.30,
+      "amax": 0.8,
+      "response": "fopdt",
+      "unit": "m/s per normalized stick",
+      "fit": {"bootstrap": true},
+      "validation": {}
+    },
+    "yaw": {
+      "K": 150.0,
+      "tau": 0.35,
+      "Td": 0.10,
+      "vmax": 60.0,
+      "amax": 180.0,
+      "response": "fopdt",
+      "unit": "deg/s per normalized stick",
+      "fit": {"bootstrap": true},
+      "validation": {}
+    }
+  }
+}

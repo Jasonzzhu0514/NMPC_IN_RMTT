@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.tmp
+*.bak
+*.deleteme
+workflow_runs/
+identify_run_*/
+models/comparisons/
+*_run.csv
+xyzway_*.csv
+native/vrpn_pose_json
