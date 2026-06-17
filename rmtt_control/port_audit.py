@@ -7,22 +7,17 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import os
 from pathlib import Path
 import re
 import sys
 
 from nmpc.identification.protocol import RMTT_MAX_IDENTIFICATION_AMPLITUDE
 from rmtt_control.nmpc_rmtt_bridge import RMTT_STICK_MAX, RMTT_STICK_MIN
+from rmtt_config import DEFAULT_NMPC_SOURCE_ROOT
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE_ROOT = Path(
-    os.environ.get(
-        "NMPC_SOURCE_ROOT",
-        str(ROOT / "external" / "source_nmpc"),
-    )
-)
+DEFAULT_SOURCE_ROOT = Path(DEFAULT_NMPC_SOURCE_ROOT or (ROOT / "external" / "source_nmpc"))
 FORBIDDEN_PATTERNS = (
     "mqtt",
     "rospy",

@@ -1,8 +1,10 @@
-# RMTT 非 ROS 控制工作区
+# RMTT NMPC 自主飞行工作区
 
 这个工作区用于用 RoboMaster SDK 直接控制 RMTT，并把 NMPC 控制核心集成到本地 Python 链路中。飞行控制使用 RoboMaster SDK 的 `flight.rc(a,b,c,d)`，杆量范围是 `[-100, 100]`。
 
 起飞和降落走 RoboMaster SDK 的 `drone.flight.takeoff()` / `drone.flight.land()`，不是手写杆量起降。辨识和 XYZ 飞行的定位都来自 VRPN，不使用无人机 OSD 位置或 ROS topic。
+
+下面的命令默认在仓库根目录运行。
 
 ## 目录结构
 
@@ -16,26 +18,44 @@ native/         原生 VRPN helper
 tests/          离线测试和审计
 ```
 
-## 环境变量
+## 本地配置
 
-不要把具体 IP、Wi-Fi 名称、密码、本机路径写死到代码或文档命令里。先在终端里按现场环境设置：
+不要把具体 IP、Wi-Fi 名称、密码、本机路径写死到代码或提交文档里。仓库提供配置模板，真实配置放到本机忽略文件：
 
 ```bash
-export RMTT_REPO_ROOT="$(pwd)"
-export PYTHONPATH="$RMTT_REPO_ROOT"
-export RMTT_IP="<扫描得到的RMTT_IP>"
-export RMTT_WIFI_SSID="<目标路由SSID>"
-export RMTT_WIFI_PASSWORD="<目标路由密码>"
-export RMTT_AP_LOCAL_IP="<电脑连接RMTT热点时的本机IP>"
-export RMTT_VRPN_TRACKER="<VRPN_TRACKER_NAME>"
-export RMTT_VRPN_HOST="<VRPN_SERVER_HOST>"
-export RMTT_VRPN_PORT="<VRPN_SERVER_PORT>"
+cp config/rmtt.example.json config/rmtt.local.json
 ```
 
-如果需要运行 NMPC 源码对照审计，并且本机有参考源码目录，额外设置：
+编辑 `config/rmtt.local.json`。`drone.ip` 填扫描到的 RMTT 地址，`drone.ap_local_ip` 填电脑连接 RMTT 热点时的本机地址，`wifi` 填目标路由信息，`vrpn` 填定位服务信息，其中 `vrpn.port` 是数字或 `null`。
+
+`config/rmtt.local.json` 已加入 `.gitignore`。代码默认读取它；如果需要临时覆盖，可以设置同名环境变量，例如 `RMTT_IP`、`RMTT_VRPN_HOST`、`RMTT_CONFIG`。
+
+## Clone 后初始化
+
+从仓库 clone 下来后，到执行配网前，可以先运行：
 
 ```bash
-export NMPC_SOURCE_ROOT="<参考NMPC源码目录>"
+python3 scripts/setup_workspace.py
+```
+
+这个脚本只做本地准备，不连接无人机、不配网、不发杆量。它会安装 Python 依赖、创建 `config/rmtt.local.json`、检查核心 import，并运行离线校验。
+
+如果本机已经装好 VRPN 开发库，还可以顺手构建 VRPN helper：
+
+```bash
+python3 scripts/setup_workspace.py --build-vrpn-helper
+```
+
+如果不想安装依赖，只想补齐配置文件：
+
+```bash
+python3 scripts/setup_workspace.py --skip-pip
+```
+
+如果只想快速创建配置，不跑离线校验：
+
+```bash
+python3 scripts/setup_workspace.py --skip-pip --skip-validate
 ```
 
 ## 总流程
@@ -59,7 +79,6 @@ export NMPC_SOURCE_ROOT="<参考NMPC源码目录>"
 ## 0. 工作区检查
 
 ```bash
-cd "$RMTT_REPO_ROOT"
 python3 -m rmtt_control.validate_workspace
 ```
 
@@ -70,11 +89,7 @@ python3 -m rmtt_control.validate_workspace
 配网前，电脑需要先连到 RMTT 自己的 Wi-Fi 热点。
 
 ```bash
-cd "$RMTT_REPO_ROOT"
-python3 scripts/wifi_test.py \
-  --local-ip "$RMTT_AP_LOCAL_IP" \
-  --ssid "$RMTT_WIFI_SSID" \
-  --password "$RMTT_WIFI_PASSWORD"
+python3 scripts/wifi_test.py
 ```
 
 配网命令发出后，RMTT 会切到路由模式。然后电脑也切到同一个路由网络，再查飞机 IP：
@@ -83,18 +98,13 @@ python3 scripts/wifi_test.py \
 python3 scripts/scan_ip.py
 ```
 
-把扫描得到的飞机 IP 写入当前终端：
-
-```bash
-export RMTT_IP="<扫描得到的RMTT_IP>"
-```
+把扫描得到的飞机 IP 写入 `config/rmtt.local.json` 的 `drone.ip`。
 
 ## 2. 飞行前检查
 
 构建 VRPN helper：
 
 ```bash
-cd "$RMTT_REPO_ROOT"
 ./build_vrpn_helper.sh
 ```
 
@@ -103,10 +113,7 @@ cd "$RMTT_REPO_ROOT"
 ```bash
 python3 -m rmtt_control.preflight_check \
   --check-vrpn-helper \
-  --check-vrpn \
-  --tracker "$RMTT_VRPN_TRACKER" \
-  --host "$RMTT_VRPN_HOST" \
-  --port "$RMTT_VRPN_PORT"
+  --check-vrpn
 ```
 
 检查无人机连接和电量：
@@ -114,7 +121,6 @@ python3 -m rmtt_control.preflight_check \
 ```bash
 python3 -m rmtt_control.preflight_check \
   --check-drone \
-  --ip "$RMTT_IP" \
   --min-battery 30
 ```
 
@@ -122,7 +128,6 @@ python3 -m rmtt_control.preflight_check \
 
 ```bash
 python3 scripts/battery_monitor.py \
-  --ip "$RMTT_IP" \
   --timeout 8
 ```
 
@@ -131,18 +136,14 @@ python3 scripts/battery_monitor.py \
 这个阶段是一次独立飞行：连接、起飞、辨识、降落、拟合模型、检查模型质量。
 
 ```bash
-cd "$RMTT_REPO_ROOT"
 python3 -m rmtt_control.identify_pipeline \
-  --ip "$RMTT_IP" \
   --axes pitch,roll,throttle,yaw \
+  --pass-count 2 \
   --signals step \
   --amplitudes 10,20 \
   --field-limit 1.5 \
   --z-min 0.25 \
   --z-max 2.0 \
-  --tracker "$RMTT_VRPN_TRACKER" \
-  --host "$RMTT_VRPN_HOST" \
-  --port "$RMTT_VRPN_PORT" \
   --method auto \
   --recenter \
   --send \
@@ -152,7 +153,8 @@ python3 -m rmtt_control.identify_pipeline \
   --fit \
   --backup \
   --quality-gate \
-  --quality-fail-on-bootstrap
+  --quality-fail-on-bootstrap \
+  --quality-require-validation
 ```
 
 说明：
@@ -160,9 +162,12 @@ python3 -m rmtt_control.identify_pipeline \
 - `--send --confirm-risk` 才会真实发杆量。
 - `--takeoff --land` 表示这个阶段自己起飞、自己降落。
 - `--recenter` 会在 pitch/roll 激励后用 NMPC 回到初始 VRPN pose 附近。
-- 辨识 CSV 会写到 `identify_run_时间戳/` 或你指定的 `--output-dir`。
+- `--pass-count 2` 会采两轮独立数据：第一轮写入 `train/`，第二轮写入 `validate/`。模型只用 train 拟合，用 validate 计算独立验证指标。
+- 每个轴采集结束后会检查 CSV 质量；全部采集完成后会先降落，再拟合模型并执行模型质量检查。
+- 辨识 CSV 会写到 `identify_run_时间戳/train/` 和 `identify_run_时间戳/validate/`，或你指定的 `--output-dir` 下。
 - `--fit` 会更新 `models/rmtt_velocity_model.json`。
-- `--quality-gate --quality-fail-on-bootstrap` 会在模型不可用时让命令失败。
+- `--quality-gate --quality-fail-on-bootstrap --quality-require-validation` 会在模型不可用或缺少独立验证时让命令失败。
+- 当前 `step` 协议每个轴每轮约 12 秒；两轮四轴激励约 96 秒。加上轴间稳定、pitch/roll 的 recenter、起飞降落和连接开销，通常按 3 到 5 分钟预估。若 VRPN 丢帧、recenter 多次接近超时、或安全边界触发，时间会变长或直接失败。
 
 干跑时去掉：
 
@@ -178,6 +183,7 @@ python3 -m rmtt_control.identify_pipeline \
 python3 -m rmtt_control.model_quality \
   --model models/rmtt_velocity_model.json \
   --fail-on-bootstrap \
+  --require-validation \
   --min-samples 30 \
   --min-r2 0.2 \
   --max-nrmse 0.8
@@ -190,22 +196,18 @@ python3 -m rmtt_control.model_quality \
 这个阶段是另一架次独立飞行：检查模型、连接、起飞、飞 waypoint、降落。
 
 ```bash
-cd "$RMTT_REPO_ROOT"
 python3 -m rmtt_control.xyzway_nmpc \
-  --ip "$RMTT_IP" \
   --model models/rmtt_velocity_model.json \
-  --waypoints example_waypoints.json \
+  --waypoints waypoints/line-guide-diagonal-3d.json \
   --source vrpn \
   --controller mission \
-  --tracker "$RMTT_VRPN_TRACKER" \
-  --host "$RMTT_VRPN_HOST" \
-  --port "$RMTT_VRPN_PORT" \
   --method auto \
   --field-limit 1.5 \
   --z-min 0.25 \
   --z-max 2.0 \
   --log-csv xyzway_run.csv \
   --require-real-model \
+  --quality-require-validation \
   --send \
   --confirm-risk \
   --takeoff \
@@ -216,7 +218,7 @@ python3 -m rmtt_control.xyzway_nmpc \
 
 - `--source vrpn` 表示 XYZ 飞行定位来自 VRPN。
 - `--controller mission` 使用本地 `NmpcMissionController` gate。
-- `--require-real-model` 会拒绝 bootstrap 或低质量模型。
+- `--require-real-model --quality-require-validation` 会拒绝 bootstrap、低质量模型，或缺少独立验证指标的模型。
 - `--takeoff --land` 表示 XYZ 阶段自己起飞、自己降落。
 
 干跑 XYZ，不连接飞机、不发杆量：
@@ -225,14 +227,22 @@ python3 -m rmtt_control.xyzway_nmpc \
 python3 -m rmtt_control.xyzway_nmpc \
   --source static \
   --controller mission \
-  --waypoints example_waypoints.json \
+  --waypoints waypoints/line-guide-diagonal-3d.json \
   --max-waypoint-sec 2 \
   --log-csv xyzway_dryrun.csv
 ```
 
-## waypoint 文件格式
+## 航线文件
 
-`example_waypoints.json` 可以是列表：
+默认纳入仓库的实飞航线是：
+
+```text
+waypoints/line-guide-diagonal-3d.json
+```
+
+这条航线从原点出发，经过四个对角/角点，再回到原点。最大水平坐标绝对值是 `1.1m`，最高高度是 `1.5m`，匹配 README 中 `--field-limit 1.5 --z-max 2.0` 的默认安全边界。
+
+自定义航线可以是列表：
 
 ```json
 [
@@ -240,7 +250,7 @@ python3 -m rmtt_control.xyzway_nmpc \
 ]
 ```
 
-也可以是：
+也可以是带 `waypoints` 字段的对象：
 
 ```json
 {
@@ -262,16 +272,15 @@ python3 scripts/scan_ip.py
 
 ```bash
 python3 scripts/wifi_test.py \
-  --local-ip "$RMTT_AP_LOCAL_IP" \
-  --ssid "$RMTT_WIFI_SSID" \
-  --password "$RMTT_WIFI_PASSWORD"
+  --local-ip "<电脑连接RMTT热点时的本机IP>" \
+  --ssid "<目标路由SSID>" \
+  --password "<目标路由密码>"
 ```
 
 起飞降落测试：
 
 ```bash
 python3 scripts/takeoff_land.py \
-  --ip "$RMTT_IP" \
   --confirm-risk
 ```
 

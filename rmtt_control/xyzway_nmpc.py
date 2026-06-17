@@ -64,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quality-min-r2", type=float, default=0.20)
     parser.add_argument("--quality-min-vaf", type=float, default=0.20)
     parser.add_argument("--quality-max-nrmse", type=float, default=0.80)
+    parser.add_argument(
+        "--quality-require-validation",
+        action="store_true",
+        help="require independent validation metrics in the fitted model",
+    )
     parser.add_argument("--rate", type=float, default=10.0)
     parser.add_argument("--log-csv", default=None)
     parser.add_argument("--quiet", action="store_true", help="suppress per-step console status")

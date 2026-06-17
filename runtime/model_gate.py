@@ -25,6 +25,7 @@ def check_model_quality_gate(args: argparse.Namespace, *, label: str) -> int:
         min_vaf=args.quality_min_vaf,
         max_nrmse=args.quality_max_nrmse,
         fail_on_bootstrap=True,
+        require_validation=getattr(args, "quality_require_validation", False),
     )
     try:
         results = check_model_quality(args.model or DEFAULT_MODEL_PATH, thresholds=thresholds)

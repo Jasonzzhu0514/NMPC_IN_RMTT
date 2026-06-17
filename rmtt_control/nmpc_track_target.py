@@ -47,6 +47,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quality-min-r2", type=float, default=0.20)
     parser.add_argument("--quality-min-vaf", type=float, default=0.20)
     parser.add_argument("--quality-max-nrmse", type=float, default=0.80)
+    parser.add_argument(
+        "--quality-require-validation",
+        action="store_true",
+        help="require independent validation metrics in the fitted model",
+    )
     parser.add_argument("--send", action="store_true", help="actually send rc commands to the drone")
     parser.add_argument("--confirm-risk", action="store_true", help="required with --send")
     parser.add_argument("--takeoff", action="store_true", help="take off before tracking; requires --send")

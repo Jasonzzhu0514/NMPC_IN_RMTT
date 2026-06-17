@@ -1,0 +1,18 @@
+{
+  "drone": {
+    "ip": "",
+    "ap_local_ip": ""
+  },
+  "wifi": {
+    "ssid": "",
+    "password": ""
+  },
+  "vrpn": {
+    "tracker": "",
+    "host": "",
+    "port": null
+  },
+  "audit": {
+    "nmpc_source_root": ""
+  }
+}

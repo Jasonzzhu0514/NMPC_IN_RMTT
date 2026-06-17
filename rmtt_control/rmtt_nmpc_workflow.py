@@ -21,7 +21,7 @@ from rmtt_config import DEFAULT_RMTT_IP
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL = fit_rmtt_model.DEFAULT_MODEL
-DEFAULT_WAYPOINTS = ROOT / "example_waypoints.json"
+DEFAULT_WAYPOINTS = ROOT / "waypoints" / "line-guide-diagonal-3d.json"
 STAGES = ("preflight", "identify", "xyzway")
 WORKFLOW_MANIFEST = "workflow_manifest.json"
 
@@ -200,6 +200,7 @@ def build_commands(
             "--fit",
             "--quality-gate",
             "--quality-fail-on-bootstrap",
+            "--quality-require-validation",
             "--quality-min-samples",
             str(args.quality_min_samples),
             "--quality-min-r2",
@@ -280,6 +281,8 @@ def build_commands(
             command.append("--reset-controller-per-waypoint")
         if _xyzway_requires_real_model(args, stages):
             command.append("--require-real-model")
+        if not args.allow_bootstrap_xyzway:
+            command.append("--quality-require-validation")
         if args.allow_bootstrap_xyzway:
             command.append("--allow-bootstrap-model")
         if args.send:
@@ -359,6 +362,7 @@ def _check_workflow_evidence(
             min_vaf=args.quality_min_vaf,
             max_nrmse=args.quality_max_nrmse,
             fail_on_bootstrap=True,
+            require_validation=True,
         ),
         require_send=strict_hardware,
         require_vrpn_check=strict_hardware,

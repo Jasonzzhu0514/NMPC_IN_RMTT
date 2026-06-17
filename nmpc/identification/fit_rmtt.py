@@ -197,6 +197,8 @@ def build_axis_model_document(
     series: SampleSeries,
     fit: FitResult,
     source_paths: list[str | Path],
+    validation: dict | None = None,
+    validation_paths: list[str | Path] | None = None,
     note: str = "",
 ) -> dict:
     axis = _validate_axis(axis)
@@ -217,9 +219,19 @@ def build_axis_model_document(
             "source_csv": [str(Path(path)) for path in source_paths],
             "note": note,
         },
-        "validation": {},
+        "validation": _validation_document(validation or {}, validation_paths or []),
         "fit_metadata": series.metadata or {},
     }
+
+
+def _validation_document(metrics: dict, paths: list[str | Path]) -> dict:
+    document = dict(metrics)
+    if paths:
+        document["source_csv"] = [str(Path(path)) for path in paths]
+        document["independent"] = True
+    elif document:
+        document["independent"] = False
+    return document
 
 
 def build_full_model_document(axes: dict[str, dict], *, note: str = "") -> dict:

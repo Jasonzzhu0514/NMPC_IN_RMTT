@@ -22,6 +22,7 @@ class QualityThresholds:
     min_vaf: float = 0.20
     max_nrmse: float = 0.80
     fail_on_bootstrap: bool = False
+    require_validation: bool = False
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-vaf", type=float, default=0.20)
     parser.add_argument("--max-nrmse", type=float, default=0.80)
     parser.add_argument("--fail-on-bootstrap", action="store_true")
+    parser.add_argument("--require-validation", action="store_true")
     args = parser.parse_args(argv)
 
     thresholds = QualityThresholds(
@@ -48,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         min_vaf=args.min_vaf,
         max_nrmse=args.max_nrmse,
         fail_on_bootstrap=args.fail_on_bootstrap,
+        require_validation=args.require_validation,
     )
     results = check_model_quality(Path(args.model), thresholds=thresholds)
     failed = False
@@ -123,6 +126,13 @@ def _check_axis(axis: str, model_axis, *, thresholds: QualityThresholds) -> Axis
     if model_axis.Td < 0.0:
         failures.append("Td must be non-negative")
 
+    _check_validation_metrics(
+        model_axis.validation or {},
+        thresholds=thresholds,
+        warnings=warnings,
+        failures=failures,
+    )
+
     return AxisQuality(
         axis=axis,
         ok=not failures,
@@ -136,6 +146,54 @@ def _float_or_none(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _check_validation_metrics(
+    validation: dict,
+    *,
+    thresholds: QualityThresholds,
+    warnings: list[str],
+    failures: list[str],
+) -> None:
+    if not validation:
+        message = "validation metrics missing"
+        if thresholds.require_validation:
+            failures.append(message)
+        else:
+            warnings.append(message)
+        return
+    if validation.get("independent") is not True:
+        message = "validation is not marked independent"
+        if thresholds.require_validation:
+            failures.append(message)
+        else:
+            warnings.append(message)
+
+    sample_count = _float_or_none(validation.get("sample_count"))
+    if sample_count is None:
+        warnings.append("validation.sample_count missing")
+    elif sample_count < thresholds.min_samples:
+        failures.append(
+            "validation sample_count {0:g} < {1}".format(sample_count, thresholds.min_samples)
+        )
+
+    r2 = _float_or_none(validation.get("r2"))
+    if r2 is None:
+        warnings.append("validation.r2 missing")
+    elif r2 < thresholds.min_r2:
+        failures.append("validation r2 {0:.3f} < {1:.3f}".format(r2, thresholds.min_r2))
+
+    vaf = _float_or_none(validation.get("vaf"))
+    if vaf is None:
+        warnings.append("validation.vaf missing")
+    elif vaf < thresholds.min_vaf:
+        failures.append("validation vaf {0:.3f} < {1:.3f}".format(vaf, thresholds.min_vaf))
+
+    nrmse = _float_or_none(validation.get("nrmse"))
+    if nrmse is None:
+        warnings.append("validation.nrmse missing")
+    elif nrmse > thresholds.max_nrmse:
+        failures.append("validation nrmse {0:.3f} > {1:.3f}".format(nrmse, thresholds.max_nrmse))
 
 
 if __name__ == "__main__":

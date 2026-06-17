@@ -4,12 +4,14 @@ import csv
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
+import rmtt_config
 from rmtt_control import identify_collect
 from rmtt_control.identify_collect import _recenter_reached, _safety_check
 from rmtt_control import identify_pipeline
@@ -47,6 +49,36 @@ from rmtt_control import xyzway_nmpc
 
 
 TEST_RMTT_IP = "198.51.100.43"
+
+
+class ConfigLoadingTest(unittest.TestCase):
+    def test_load_config_reads_json_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rmtt.local.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "drone": {"ip": TEST_RMTT_IP},
+                        "vrpn": {"tracker": "rmtt", "host": "198.51.100.10", "port": 3883},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = rmtt_config.load_config(path)
+        self.assertEqual(config["drone"]["ip"], TEST_RMTT_IP)
+        self.assertEqual(config["vrpn"]["port"], 3883)
+
+    def test_config_helpers_use_file_and_allow_environment_override(self) -> None:
+        with mock.patch.object(
+            rmtt_config,
+            "CONFIG",
+            {"drone": {"ip": TEST_RMTT_IP}, "vrpn": {"port": 3883}},
+        ):
+            self.assertEqual(rmtt_config.config_str("RMTT_IP", "drone", "ip"), TEST_RMTT_IP)
+            self.assertEqual(rmtt_config.config_int("RMTT_VRPN_PORT", "vrpn", "port"), 3883)
+            with mock.patch.dict(os.environ, {"RMTT_IP": "203.0.113.7", "RMTT_VRPN_PORT": "4555"}):
+                self.assertEqual(rmtt_config.config_str("RMTT_IP", "drone", "ip"), "203.0.113.7")
+                self.assertEqual(rmtt_config.config_int("RMTT_VRPN_PORT", "vrpn", "port"), 4555)
 
 
 class SafetyCheckTest(unittest.TestCase):
@@ -96,6 +128,20 @@ class FitFilteringTest(unittest.TestCase):
         self.assertEqual(len(series.t), 19)
         self.assertEqual(set(series.u), {0.2})
         self.assertEqual(series.segment_starts, [0])
+
+    def test_fit_model_requires_validation_csv_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fit.csv"
+            _write_quality_csv(path, axis="pitch", safety_failed=False, one_sided=False)
+            with self.assertRaises(ValueError) as ctx:
+                identify_pipeline.fit_rmtt_model.main(
+                    [
+                        "--pitch-csv",
+                        str(path),
+                        "--require-validation",
+                    ]
+                )
+        self.assertIn("missing validation CSV", str(ctx.exception))
 
 
 class IdentificationQualityTest(unittest.TestCase):
@@ -167,6 +213,8 @@ class IdentifyPipelineCleanupTest(unittest.TestCase):
                     [
                         "--axes",
                         "pitch",
+                        "--pass-count",
+                        "1",
                         "--output-dir",
                         tmp,
                         "--send",
@@ -192,6 +240,8 @@ class IdentifyPipelineCleanupTest(unittest.TestCase):
                     [
                         "--axes",
                         "pitch",
+                        "--pass-count",
+                        "1",
                         "--output-dir",
                         tmp,
                         "--send",
@@ -213,6 +263,8 @@ class IdentifyPipelineCleanupTest(unittest.TestCase):
                     [
                         "--axes",
                         "pitch",
+                        "--pass-count",
+                        "1",
                         "--output-dir",
                         tmp,
                         "--send",
@@ -242,6 +294,8 @@ class IdentifyPipelineCleanupTest(unittest.TestCase):
                     [
                         "--axes",
                         "pitch",
+                        "--pass-count",
+                        "1",
                         "--output-dir",
                         tmp,
                         "--send",
@@ -255,12 +309,111 @@ class IdentifyPipelineCleanupTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         land.assert_not_called()
 
+    def test_identification_lands_before_fitting_model(self) -> None:
+        events: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "identify_pitch.csv"
+            _write_quality_csv(output, axis="pitch", safety_failed=False, one_sided=False)
+
+            def fake_collect(argv):
+                out_index = argv.index("--output") + 1
+                Path(argv[out_index]).write_text(output.read_text())
+                return 0
+
+            def fake_land(_ip):
+                events.append("land")
+
+            def fake_fit(_argv):
+                events.append("fit")
+                return 0
+
+            with mock.patch.object(identify_pipeline.identify_collect, "main", side_effect=fake_collect), \
+                mock.patch.object(identify_pipeline, "_takeoff", return_value=None), \
+                mock.patch.object(identify_pipeline, "_settle", return_value=None), \
+                mock.patch.object(identify_pipeline, "_land", side_effect=fake_land), \
+                mock.patch.object(identify_pipeline.fit_rmtt_model, "main", side_effect=fake_fit):
+                rc = identify_pipeline.main(
+                    [
+                        "--axes",
+                        "pitch",
+                        "--output-dir",
+                        tmp,
+                        "--send",
+                        "--confirm-risk",
+                        "--takeoff",
+                        "--land",
+                        "--fit",
+                        "--min-csv-rows",
+                        "20",
+                    ]
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(events, ["land", "fit"])
+
+    def test_identification_default_collects_train_and_validate_passes_for_fit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture.csv"
+            _write_quality_csv(fixture, axis="pitch", safety_failed=False, one_sided=False)
+            fit_args_seen: list[list[str]] = []
+
+            def fake_collect(argv):
+                out_index = argv.index("--output") + 1
+                Path(argv[out_index]).write_text(fixture.read_text())
+                return 0
+
+            def fake_fit(argv):
+                fit_args_seen.append(list(argv))
+                return 0
+
+            with mock.patch.object(identify_pipeline.identify_collect, "main", side_effect=fake_collect), \
+                mock.patch.object(identify_pipeline, "_settle", return_value=None), \
+                mock.patch.object(identify_pipeline.fit_rmtt_model, "main", side_effect=fake_fit):
+                rc = identify_pipeline.main(
+                    [
+                        "--axes",
+                        "pitch",
+                        "--output-dir",
+                        tmp,
+                        "--fit",
+                        "--min-csv-rows",
+                        "20",
+                    ]
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(fit_args_seen), 1)
+        fit_args = fit_args_seen[0]
+        train_path = Path(fit_args[fit_args.index("--pitch-csv") + 1])
+        validate_path = Path(fit_args[fit_args.index("--validate-pitch-csv") + 1])
+        self.assertIn("train", train_path.parts)
+        self.assertIn("validate", validate_path.parts)
+        self.assertNotEqual(train_path, validate_path)
+
+    def test_identification_rejects_required_validation_with_single_pass(self) -> None:
+        rc = identify_pipeline.main(
+            [
+                "--axes",
+                "pitch",
+                "--pass-count",
+                "1",
+                "--quality-require-validation",
+            ]
+        )
+        self.assertEqual(rc, 2)
+
+    def test_identification_rejects_unsupported_pass_count(self) -> None:
+        rc = identify_pipeline.main(["--axes", "pitch", "--pass-count", "3"])
+        self.assertEqual(rc, 2)
+
+    def test_identification_rejects_quality_gate_without_fit(self) -> None:
+        rc = identify_pipeline.main(["--axes", "pitch", "--quality-gate"])
+        self.assertEqual(rc, 2)
+
 
 class ModelQualityTest(unittest.TestCase):
     def test_quality_accepts_non_bootstrap_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             model_path = Path(tmp) / "model.json"
-            _write_quality_model(model_path, bootstrap=False)
+            _write_quality_model(model_path, bootstrap=False, validation=False)
             results = check_model_quality(
                 model_path,
                 thresholds=QualityThresholds(
@@ -283,6 +436,26 @@ class ModelQualityTest(unittest.TestCase):
             )
         self.assertTrue(any(not item.ok for item in results))
 
+    def test_quality_requires_independent_validation_when_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.json"
+            _write_quality_model(model_path, bootstrap=False, validation=False)
+            results = check_model_quality(
+                model_path,
+                thresholds=QualityThresholds(
+                    fail_on_bootstrap=True,
+                    require_validation=True,
+                ),
+            )
+        self.assertTrue(any(not item.ok for item in results))
+        self.assertTrue(
+            any(
+                "validation metrics missing" in failure
+                for item in results
+                for failure in item.failures
+            )
+        )
+
     def test_runtime_model_gate_requirement_flags(self) -> None:
         args = mock.Mock(send=True, require_real_model=False, allow_bootstrap_model=False)
         self.assertTrue(model_quality_gate_required(args))
@@ -290,6 +463,21 @@ class ModelQualityTest(unittest.TestCase):
         self.assertFalse(model_quality_gate_required(args))
         self.assertEqual(MODEL_QUALITY_RETURN_CODE, nmpc_track_target.TRACK_MODEL_QUALITY_RETURN_CODE)
         self.assertEqual(MODEL_QUALITY_RETURN_CODE, xyzway_nmpc.XYZWAY_MODEL_QUALITY_RETURN_CODE)
+
+    def test_runtime_model_gate_can_require_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.json"
+            _write_quality_model(model_path, bootstrap=False, validation=False)
+            args = mock.Mock(
+                model=str(model_path),
+                quality_min_samples=30,
+                quality_min_r2=0.2,
+                quality_min_vaf=0.2,
+                quality_max_nrmse=0.8,
+                quality_require_validation=True,
+            )
+            rc = xyzway_nmpc.check_model_quality_gate(args, label="test")
+        self.assertEqual(rc, MODEL_QUALITY_RETURN_CODE)
 
 
 class HardwareSendConfirmationTest(unittest.TestCase):
@@ -556,6 +744,7 @@ class HardwareSendConfirmationTest(unittest.TestCase):
                         "--model",
                         str(model_path),
                         "--require-real-model",
+                        "--quality-require-validation",
                     ]
                 )
         self.assertEqual(rc, 0)
@@ -708,6 +897,14 @@ class XyzRuntimeMissionTest(unittest.TestCase):
             waypoints = load_waypoints(path)
         self.assertEqual(len(waypoints), 2)
         self.assertEqual(waypoints[0], Waypoint(0.1, 0.2, 0.8, 30.0, 0.4))
+        validate_waypoints(waypoints, SafetyBounds(field_limit=1.5, z_min=0.25, z_max=2.0))
+
+    def test_repository_line_guide_waypoints_are_within_default_bounds(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "waypoints" / "line-guide-diagonal-3d.json"
+        waypoints = load_waypoints(path)
+        self.assertEqual(len(waypoints), 6)
+        self.assertEqual(waypoints[0], Waypoint(0.0, 0.0, 1.0, 0.0, 0.8))
+        self.assertEqual(waypoints[-1], Waypoint(0.0, 0.0, 1.0, 0.0, 0.8))
         validate_waypoints(waypoints, SafetyBounds(field_limit=1.5, z_min=0.25, z_max=2.0))
 
     def test_pose_safety_rejects_stale_and_boundary_pose(self) -> None:
@@ -1055,7 +1252,7 @@ class WorkflowTest(unittest.TestCase):
                 "--work-dir",
                 "/tmp/rmtt_workflow_test",
                 "--waypoints",
-                "example_waypoints.json",
+                "waypoints/line-guide-diagonal-3d.json",
             ]
         )
         commands = rmtt_nmpc_workflow.build_commands(
@@ -1296,7 +1493,7 @@ class WorkflowTest(unittest.TestCase):
                         "--work-dir",
                         str(work_dir),
                         "--waypoints",
-                        "example_waypoints.json",
+                        "waypoints/line-guide-diagonal-3d.json",
                     ]
                 )
             manifest = json.loads((work_dir / rmtt_nmpc_workflow.WORKFLOW_MANIFEST).read_text())
@@ -1896,7 +2093,13 @@ def _write_quality_csv(path: Path, *, axis: str, safety_failed: bool, one_sided:
         writer.writerows(rows)
 
 
-def _write_quality_model(path: Path, *, bootstrap: bool, source_dir: Path | None = None) -> None:
+def _write_quality_model(
+    path: Path,
+    *,
+    bootstrap: bool,
+    source_dir: Path | None = None,
+    validation: bool = True,
+) -> None:
     axes = {}
     for axis in ("pitch", "roll", "throttle", "yaw"):
         fit = (
@@ -1906,6 +2109,17 @@ def _write_quality_model(path: Path, *, bootstrap: bool, source_dir: Path | None
         )
         if source_dir is not None and not bootstrap:
             fit["source_csv"] = [str(source_dir / f"identify_{axis}_fixture.csv")]
+        validation_metrics = (
+            {}
+            if bootstrap or not validation
+            else {
+                "sample_count": 80,
+                "r2": 0.76,
+                "vaf": 0.72,
+                "nrmse": 0.24,
+                "independent": True,
+            }
+        )
         axes[axis] = {
             "K": 1.0 if axis != "yaw" else 100.0,
             "tau": 0.3,
@@ -1915,7 +2129,7 @@ def _write_quality_model(path: Path, *, bootstrap: bool, source_dir: Path | None
             "response": "fopdt",
             "unit": "m_s",
             "fit": fit,
-            "validation": {},
+            "validation": validation_metrics,
         }
     path.write_text(json.dumps({"metadata": {}, "axes": axes}))
 
